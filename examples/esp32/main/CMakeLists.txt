@@ -1,4 +1,4 @@
-idf_component_register(SRCS main.cpp)
+idf_component_register(SRCS main.cpp  INCLUDE_DIRS "")
 
 if(NOT DEFINED LINK_ESP_TASK_CORE_ID)
   set(LINK_ESP_TASK_CORE_ID tskNO_AFFINITY)

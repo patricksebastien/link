@@ -12,6 +12,7 @@
 
 #define LED GPIO_NUM_2
 #define PRINT_LINK_STATE false
+#define USE_I2C_DISPLAY
 
 // Serial midi
 #define ECHO_TEST_RTS (UART_PIN_NO_CHANGE)
@@ -24,6 +25,58 @@
 #define MIDI_STOP 0xFC
 #define MIDI_SONG_POSITION_POINTER 0xF2
 
+#if defined USE_I2C_DISPLAY
+#define PRINT_LINK_STATE true
+extern "C" {
+#include <stdio.h>
+#include <stdbool.h>
+#include "ssd1306.h"
+#include "ssd1306_draw.h"
+#include "ssd1306_font.h"
+#include "ssd1306_default_if.h"
+
+
+static const int I2CDisplayAddress = 0x3C;
+static const int I2CDisplayWidth = 128;
+static const int I2CDisplayHeight = 64;
+static const int I2CResetPin = -1;
+
+struct SSD1306_Device I2CDisplay;
+
+bool DefaultBusInit( void ) {  
+        assert( SSD1306_I2CMasterInitDefault( ) == true );
+        assert( SSD1306_I2CMasterAttachDisplayDefault( &I2CDisplay, I2CDisplayWidth, I2CDisplayHeight, I2CDisplayAddress, I2CResetPin ) == true );
+    return true;
+}
+
+void FontDisplayTask( void* Param ) {
+    struct SSD1306_Device* Display = ( struct SSD1306_Device* ) Param;
+
+    if ( Param != NULL ) {
+
+        SSD1306_SetFont( Display, &Font_droid_sans_mono_13x24);
+        SSD1306_Clear( Display, SSD_COLOR_BLACK );
+        SSD1306_FontDrawAnchoredString( Display, TextAnchor_North, "BPM", SSD_COLOR_WHITE );
+        SSD1306_FontDrawAnchoredString( Display, TextAnchor_Center, "66.6", SSD_COLOR_WHITE );
+        SSD1306_Update( Display );
+    }
+
+    vTaskDelete( NULL );
+}
+    
+void SetupDemo( struct SSD1306_Device* DisplayHandle, const struct SSD1306_FontDef* Font ) {
+    SSD1306_Clear( DisplayHandle, SSD_COLOR_BLACK );
+    SSD1306_SetFont( DisplayHandle, Font );
+}
+
+void SayHello( struct SSD1306_Device* DisplayHandle, const char* HelloText ) {
+    SSD1306_FontDrawAnchoredString( DisplayHandle, TextAnchor_Center, HelloText, SSD_COLOR_WHITE );
+    SSD1306_Update( DisplayHandle );
+}
+    
+    
+} 
+#endif
 
 unsigned int if_nametoindex(const char* ifName)
 {
@@ -71,6 +124,16 @@ void printTask(void* userParam)
 {
   auto link = static_cast<ableton::Link*>(userParam);
   const auto quantum = 4.0;
+    
+#if defined USE_I2C_DISPLAY   
+  if ( DefaultBusInit( ) == true ) {
+        printf( "BUS Init lookin good...\n" );
+        printf( "Drawing.\n" );
+        SetupDemo( &I2CDisplay, &Font_droid_sans_mono_13x24 );
+        SayHello( &I2CDisplay, "Link!" );
+        printf( "Done!\n" );
+   }
+#endif  
 
   while (true)
   {
@@ -78,10 +141,25 @@ void printTask(void* userParam)
     const auto numPeers = link->numPeers();
     const auto time = link->clock().micros();
     const auto beats = sessionState.beatAtTime(time, quantum);
+      
+#if defined USE_I2C_DISPLAY
+    char buf[10];
+    snprintf(buf, 10 , "%i", (int) round( sessionState.tempo() ) );
+#endif
+      
     std::cout << std::defaultfloat << "| peers: " << numPeers << " | "
               << "tempo: " << sessionState.tempo() << " | " << std::fixed
               << "beats: " << beats << " |" << std::endl;
     vTaskDelay(800 / portTICK_PERIOD_MS);
+    
+#if defined USE_I2C_DISPLAY
+      SSD1306_Clear( &I2CDisplay, SSD_COLOR_BLACK );
+      SSD1306_SetFont( &I2CDisplay, &Font_droid_sans_mono_13x24);
+      SSD1306_FontDrawAnchoredString( &I2CDisplay, TextAnchor_North, "BPM", SSD_COLOR_WHITE );
+      SSD1306_FontDrawAnchoredString( &I2CDisplay, TextAnchor_Center, buf, SSD_COLOR_WHITE );
+      SSD1306_Update( &I2CDisplay );   
+#endif
+      
   }
 }
 
