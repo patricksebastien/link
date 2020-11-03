@@ -12,7 +12,9 @@
 
 #define LED GPIO_NUM_2
 #define PRINT_LINK_STATE false
-#define USE_I2C_DISPLAY
+#define USE_START_STOP
+#define USE_I2C_DISPLAY 
+
 
 // Serial midi
 #define ECHO_TEST_RTS (UART_PIN_NO_CHANGE)
@@ -25,10 +27,39 @@
 #define MIDI_STOP 0xFC
 #define MIDI_SONG_POSITION_POINTER 0xF2
 
-#if defined USE_I2C_DISPLAY
-#define PRINT_LINK_STATE true
+#if defined USE_START_STOP
 extern "C" {
-#include <stdio.h>
+#include "freertos/queue.h"
+#include <string.h>
+#include <stdlib.h>
+
+#define GPIO_INPUT_IO_0     GPIO_NUM_4
+#define GPIO_INPUT_PIN_SEL  (1ULL<<GPIO_INPUT_IO_0)  
+#define ESP_INTR_FLAG_DEFAULT 0
+
+static xQueueHandle gpio_evt_queue = NULL;
+
+static void IRAM_ATTR gpio_isr_handler(void* arg)
+{
+    uint32_t gpio_num = (uint32_t) arg;
+    xQueueSendFromISR(gpio_evt_queue, &gpio_num, NULL);
+}
+
+static void gpio_task_example(void* arg)
+{
+    uint32_t io_num;
+    for(;;) {
+        if(xQueueReceive(gpio_evt_queue, &io_num, portMAX_DELAY)) {
+            printf("GPIO[%d] intr, val: %d\n", io_num, gpio_get_level((gpio_num_t)io_num));
+        }
+    }
+}
+}
+#endif
+
+#if defined USE_I2C_DISPLAY
+#define PRINT_LINK_STATE true  // je vais changer ceci pour afficher uniquement lorsqu'il y a un changement de BPM
+extern "C" {
 #include <stdbool.h>
 #include "ssd1306.h"
 #include "ssd1306_draw.h"
@@ -247,5 +278,24 @@ extern "C" void app_main()
   timerGroup0Init(100, tickSemphr);
 
   xTaskCreate(tickTask, "tick", 8192, tickSemphr, configMAX_PRIORITIES - 1, nullptr);
+  
+  #if defined USE_START_STOP
+  gpio_config_t io_conf;
+  io_conf.intr_type = (gpio_int_type_t)GPIO_PIN_INTR_NEGEDGE; 
+  io_conf.intr_type = (gpio_int_type_t)GPIO_PIN_INTR_DISABLE; //disable interrupt
+  io_conf.pin_bit_mask = GPIO_INPUT_PIN_SEL;  //bit mask of the pins, use GPIO4
+  io_conf.mode = GPIO_MODE_INPUT;  //set as input mode   
+  io_conf.pull_down_en = (gpio_pulldown_t)0; // 0 //disable pull-down mode
+  io_conf.pull_up_en = (gpio_pullup_t)1; //enable pull-up mode
+  gpio_config(&io_conf);
 
+  gpio_set_intr_type(GPIO_INPUT_IO_0, GPIO_INTR_NEGEDGE); // GPIO_INTR_ANYEDGE //change gpio interrupt type for one pin
+  gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t)); //create a queue to handle gpio event from isr
+  xTaskCreate(gpio_task_example, "gpio_task_example", 2048, NULL, 10, NULL); //start gpio task
+
+  gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT); //install gpio isr service
+  gpio_isr_handler_add(GPIO_INPUT_IO_0, gpio_isr_handler, (void*) GPIO_INPUT_IO_0); //hook isr handler for specific gpio pin
+  gpio_isr_handler_remove(GPIO_INPUT_IO_0); //remove isr handler for gpio number. 
+  gpio_isr_handler_add(GPIO_INPUT_IO_0, gpio_isr_handler, (void*) GPIO_INPUT_IO_0);  //hook isr handler for specific gpio pin again
+  #endif
 }
