@@ -197,29 +197,12 @@ void printTask(void* userParam)
 // callbacks
 void tempoChanged(double tempo) {
   std::cout << std::defaultfloat << "| new tempo: " << tempo << std::endl;
-  /*
-  //MIDI CLOCK
-  uart_write_bytes(UART_NUM_1, (const char *) MIDI_TIMING_CLOCK, 1);
-  uart_write_bytes(UART_NUM_1, 0, 1);
-  */
 }
 
-bool lastState = false;
 void startStopChanged(bool isPlaying) {
   // received as soon as sent
   // need to wait for phase to be 0 (and deal with latency...)
   std::cout << std::defaultfloat << "| state: " << isPlaying << std::endl;
-
-  if(isPlaying != lastState) {
-    if(isPlaying) {
-      uart_write_bytes(UART_NUM_1, (const char *) MIDI_START, 1);
-      uart_write_bytes(UART_NUM_1, 0, 1);
-    } else {
-      uart_write_bytes(UART_NUM_1, (const char *) MIDI_STOP, 1);
-      uart_write_bytes(UART_NUM_1, 0, 1);
-    }
-    lastState = isPlaying;
-  }
 }
 
 void tickTask(void* userParam)
@@ -262,6 +245,16 @@ void tickTask(void* userParam)
     const auto state = link.captureAudioSessionState();
     const auto phase = state.phaseAtTime(link.clock().micros(), 1.);
     gpio_set_level(LED, fmodf(phase, 1.) < 0.1);
+
+    // MIDI CLOCK
+    // Clock events are sent at a rate of 24 pulses per quarter note
+    // (60000ms / BPM = quarter-note beat in ms) / 24 (pulses per quarter note for midi clock)
+    // 100 bpm = 25 ms midi clock pulse
+    char midiMsg[] = { MIDI_TIMING_CLOCK };
+    uart_write_bytes(UART_NUM_1, midiMsg, 1);
+
+    const TickType_t xDelay = 25 / portTICK_PERIOD_MS;
+    vTaskDelay(xDelay); // NOT WORKING...
 
     portYIELD();
   }
