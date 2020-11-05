@@ -9,6 +9,8 @@
 #include <protocol_examples_common.h>
 #include "driver/uart.h"
 #include <stdio.h>
+#include "esp_timer.h"
+#include "esp_sleep.h"
 
 #define LED GPIO_NUM_2
 #define PRINT_LINK_STATE false
@@ -207,28 +209,14 @@ void startStopChanged(bool isPlaying) {
 
 void tickTask(void* userParam)
 {
-
-  // serial
-  uart_config_t uart_config = {
-    .baud_rate = 31250, // midi speed
-    .data_bits = UART_DATA_8_BITS,
-    .parity    = UART_PARITY_DISABLE,
-    .stop_bits = UART_STOP_BITS_1,
-    .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-    .rx_flow_ctrl_thresh = 122,
-  };
-  uart_param_config(UART_NUM_1, &uart_config);
-  uart_set_pin(UART_NUM_1, ECHO_TEST_TXD, ECHO_TEST_RXD, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
-  uart_driver_install(UART_NUM_1, BUF_SIZE * 2, 0, 0, NULL, 0);
-
   // connect link
   ableton::Link link(120.0f);
   link.enable(true);
   link.enableStartStopSync(true); // if not no callback for start/stop
 
   // callbacks
-  link.setTempoCallback(tempoChanged);
-  link.setStartStopCallback(startStopChanged);
+  //link.setTempoCallback(tempoChanged);
+  //link.setStartStopCallback(startStopChanged);
 
   // debug
   if (PRINT_LINK_STATE)
@@ -246,18 +234,14 @@ void tickTask(void* userParam)
     const auto phase = state.phaseAtTime(link.clock().micros(), 1.);
     gpio_set_level(LED, fmodf(phase, 1.) < 0.1);
 
-    // MIDI CLOCK
-    // Clock events are sent at a rate of 24 pulses per quarter note
-    // (60000ms / BPM = quarter-note beat in ms) / 24 (pulses per quarter note for midi clock)
-    // 100 bpm = 25 ms midi clock pulse
-    char midiMsg[] = { MIDI_TIMING_CLOCK };
-    uart_write_bytes(UART_NUM_1, midiMsg, 1);
-
-    const TickType_t xDelay = 25 / portTICK_PERIOD_MS;
-    vTaskDelay(xDelay); // NOT WORKING...
-
     portYIELD();
   }
+}
+
+static void periodic_timer_callback(void* arg)
+{
+    char zedata[] = { MIDI_TIMING_CLOCK };
+    uart_write_bytes(UART_NUM_1, zedata, 1);
 }
 
 extern "C" void app_main()
@@ -267,28 +251,51 @@ extern "C" void app_main()
   ESP_ERROR_CHECK(esp_event_loop_create_default());
   ESP_ERROR_CHECK(example_connect());
 
+  // UART
+  uart_config_t uart_config = {
+    .baud_rate = 31250, // midi speed
+    .data_bits = UART_DATA_8_BITS,
+    .parity    = UART_PARITY_DISABLE,
+    .stop_bits = UART_STOP_BITS_1,
+    .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+    .rx_flow_ctrl_thresh = 122,
+  };
+  uart_param_config(UART_NUM_1, &uart_config);
+  uart_set_pin(UART_NUM_1, ECHO_TEST_TXD, ECHO_TEST_RXD, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+  uart_driver_install(UART_NUM_1, BUF_SIZE * 2, 0, 0, NULL, 0);
+
+  // SOFTWARE TIMER - LINK = PHASE & LED
   SemaphoreHandle_t tickSemphr = xSemaphoreCreateBinary();
   timerGroup0Init(100, tickSemphr);
-
   xTaskCreate(tickTask, "tick", 8192, tickSemphr, configMAX_PRIORITIES - 1, nullptr);
+
+  // HARDWARE TIMER - MIDI CLOCK
+  const esp_timer_create_args_t periodic_timer_args = {
+          .callback = &periodic_timer_callback,
+          .name = "periodic"
+  };
+  esp_timer_handle_t periodic_timer;
+  ESP_ERROR_CHECK(esp_timer_create(&periodic_timer_args, &periodic_timer));
+  ESP_ERROR_CHECK(esp_timer_start_periodic(periodic_timer, 20833.333333333));
   
+  // GPIO
   #if defined USE_START_STOP
-  gpio_config_t io_conf;
-  io_conf.intr_type = (gpio_int_type_t)GPIO_PIN_INTR_NEGEDGE; 
-  io_conf.intr_type = (gpio_int_type_t)GPIO_PIN_INTR_DISABLE; //disable interrupt
-  io_conf.pin_bit_mask = GPIO_INPUT_PIN_SEL;  //bit mask of the pins, use GPIO4
-  io_conf.mode = GPIO_MODE_INPUT;  //set as input mode   
-  io_conf.pull_down_en = (gpio_pulldown_t)0; // 0 //disable pull-down mode
-  io_conf.pull_up_en = (gpio_pullup_t)1; //enable pull-up mode
-  gpio_config(&io_conf);
+    gpio_config_t io_conf;
+    io_conf.intr_type = (gpio_int_type_t)GPIO_PIN_INTR_NEGEDGE; 
+    io_conf.intr_type = (gpio_int_type_t)GPIO_PIN_INTR_DISABLE; //disable interrupt
+    io_conf.pin_bit_mask = GPIO_INPUT_PIN_SEL;  //bit mask of the pins, use GPIO4
+    io_conf.mode = GPIO_MODE_INPUT;  //set as input mode   
+    io_conf.pull_down_en = (gpio_pulldown_t)0; // 0 //disable pull-down mode
+    io_conf.pull_up_en = (gpio_pullup_t)1; //enable pull-up mode
+    gpio_config(&io_conf);
 
-  gpio_set_intr_type(GPIO_INPUT_IO_0, GPIO_INTR_NEGEDGE); // GPIO_INTR_ANYEDGE //change gpio interrupt type for one pin
-  gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t)); //create a queue to handle gpio event from isr
-  xTaskCreate(gpio_task_example, "gpio_task_example", 2048, NULL, 10, NULL); //start gpio task
+    gpio_set_intr_type(GPIO_INPUT_IO_0, GPIO_INTR_NEGEDGE); // GPIO_INTR_ANYEDGE //change gpio interrupt type for one pin
+    gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t)); //create a queue to handle gpio event from isr
+    xTaskCreate(gpio_task_example, "gpio_task_example", 2048, NULL, 10, NULL); //start gpio task
 
-  gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT); //install gpio isr service
-  gpio_isr_handler_add(GPIO_INPUT_IO_0, gpio_isr_handler, (void*) GPIO_INPUT_IO_0); //hook isr handler for specific gpio pin
-  gpio_isr_handler_remove(GPIO_INPUT_IO_0); //remove isr handler for gpio number. 
-  gpio_isr_handler_add(GPIO_INPUT_IO_0, gpio_isr_handler, (void*) GPIO_INPUT_IO_0);  //hook isr handler for specific gpio pin again
+    gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT); //install gpio isr service
+    gpio_isr_handler_add(GPIO_INPUT_IO_0, gpio_isr_handler, (void*) GPIO_INPUT_IO_0); //hook isr handler for specific gpio pin
+    gpio_isr_handler_remove(GPIO_INPUT_IO_0); //remove isr handler for gpio number. 
+    gpio_isr_handler_add(GPIO_INPUT_IO_0, gpio_isr_handler, (void*) GPIO_INPUT_IO_0);  //hook isr handler for specific gpio pin again
   #endif
 }
