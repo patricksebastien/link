@@ -14,8 +14,9 @@
 
 #define LED GPIO_NUM_2
 #define PRINT_LINK_STATE false
-#define USE_START_STOP
-#define USE_I2C_DISPLAY 
+#define USE_TOUCH_PADS // touch_pad_7 (GPIO_NUM_27), touch_pad_8 (GPIO_NUM_33)
+#define USE_START_STOP // GPIO_NUM_16
+#define USE_I2C_DISPLAY // SDA GPIO_NUM21, SCL GPIO_NUM_22
 
 
 // Serial midi
@@ -29,13 +30,97 @@
 #define MIDI_STOP 0xFC
 #define MIDI_SONG_POSITION_POINTER 0xF2
 
+#if defined USE_TOUCH_PADS
+extern "C" {
+#include "freertos/queue.h"
+#include "esp_log.h" 
+#include "driver/touch_pad.h" 
+#include "soc/rtc_periph.h"
+#include "soc/sens_periph.h"
+
+static const char *TAG = "Touch pad";
+
+#define TOUCH_THRESH_NO_USE   (0)
+#define TOUCH_THRESH_PERCENT  (80)
+#define TOUCHPAD_FILTER_TOUCH_PERIOD (10)
+
+static bool s_pad_activated[TOUCH_PAD_MAX];
+static uint32_t s_pad_init_val[TOUCH_PAD_MAX];
+
+static void tp_example_set_thresholds(void)
+{
+    uint16_t touch_value;
+     for (int i = 7; i < 9; i++) {
+        touch_pad_read_filtered((touch_pad_t)i, &touch_value);
+        s_pad_init_val[i] = touch_value;
+        ESP_LOGI(TAG, "test init: touch pad [%d] val is %d", i, touch_value); //set interrupt threshold.
+        ESP_ERROR_CHECK(touch_pad_set_thresh((touch_pad_t)i, touch_value * 2 / 3));
+     }
+}
+static void tp_example_read_task(void *pvParameter) {
+    
+    static int show_message;
+    
+ while (1) {
+     
+    touch_pad_intr_enable();
+
+                if (s_pad_activated[7] == true) {
+                    ESP_LOGI(TAG, "T%d activated!", 7);  // Wait a while for the pad being released
+                    vTaskDelay(200 / portTICK_PERIOD_MS);  // Clear information on pad activation
+                    s_pad_activated[7] = false; // Reset the counter triggering a message // that application is running
+                    show_message = 1;
+                }
+   
+                if (s_pad_activated[8] == true) {
+                    ESP_LOGI(TAG, "T%d activated!", 8);  // Wait a while for the pad being released
+                    vTaskDelay(200 / portTICK_PERIOD_MS);  // Clear information on pad activation
+                    s_pad_activated[8] = false; // Reset the counter triggering a message // that application is running
+                    show_message = 1;
+                }
+     
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+
+     
+        if (show_message++ % 500 == 0) {
+            ESP_LOGI(TAG, "Waiting for any pad being touched...");    // If no pad is touched, every couple of seconds, show a message that application is running
+        }
+    }
+}
+
+//  Handle an interrupt triggered when a pad is touched. Recognize what pad has been touched and save it in a table.
+
+static void tp_example_rtc_intr(void *arg) {
+    uint32_t pad_intr = touch_pad_get_status();
+    //clear interrupt
+    touch_pad_clear_status();
+    for (int i = 7; i < 9; i++) {
+        if ((pad_intr >> i) & 0x01) {
+            s_pad_activated[i] = true;
+        }
+    }
+}
+
+
+
+static void tp_example_touch_pad_init(void) { // Before reading touch pad, we need to initialize the RTC IO.
+    for (int i = 7; i < 9; i++) {
+        //init RTC IO and mode for touch pad.
+        touch_pad_config((touch_pad_t)i, TOUCH_THRESH_NO_USE);
+    }
+}
+
+}    
+#endif
+
+
 #if defined USE_START_STOP
 extern "C" {
 #include "freertos/queue.h"
 #include <string.h>
 #include <stdlib.h>
 
-#define GPIO_INPUT_IO_0     GPIO_NUM_4
+#define GPIO_INPUT_IO_0     GPIO_NUM_16
 #define GPIO_INPUT_PIN_SEL  (1ULL<<GPIO_INPUT_IO_0)  
 #define ESP_INTR_FLAG_DEFAULT 0
 
@@ -277,10 +362,21 @@ extern "C" void app_main()
   esp_timer_handle_t periodic_timer;
   ESP_ERROR_CHECK(esp_timer_create(&periodic_timer_args, &periodic_timer));
   ESP_ERROR_CHECK(esp_timer_start_periodic(periodic_timer, 20833.333333333));
+    
+  #if defined USE_TOUCH_PADS
+    ESP_LOGI(TAG, "Initializing touch pad");     // Initialize touch pad peripheral, it will start a timer to run a filter
+    touch_pad_init();
+    touch_pad_set_fsm_mode(TOUCH_FSM_MODE_TIMER);   // If use interrupt trigger mode, should set touch sensor FSM mode at 'TOUCH_FSM_MODE_TIMER'.
+    touch_pad_set_voltage(TOUCH_HVOLT_2V7, TOUCH_LVOLT_0V5, TOUCH_HVOLT_ATTEN_1V);// Set reference voltage for charging/discharging
+    tp_example_touch_pad_init();    // Init touch pad IO
+    touch_pad_filter_start(TOUCHPAD_FILTER_TOUCH_PERIOD); // Initialize and start a software filter to detect slight change of capacitance.
+    tp_example_set_thresholds();     // Set thresh hold
+    touch_pad_isr_register(tp_example_rtc_intr, NULL); // Register touch interrupt ISR
+    xTaskCreate(&tp_example_read_task, "touch_pad_read_task", 2048, NULL, 5, NULL); // Start a task to show what pads have been touched
+  #endif
   
-  // GPIO
   #if defined USE_START_STOP
-    gpio_config_t io_conf;
+    gpio_config_t io_conf;   // GPIO
     io_conf.intr_type = (gpio_int_type_t)GPIO_PIN_INTR_NEGEDGE; 
     io_conf.intr_type = (gpio_int_type_t)GPIO_PIN_INTR_DISABLE; //disable interrupt
     io_conf.pin_bit_mask = GPIO_INPUT_PIN_SEL;  //bit mask of the pins, use GPIO4
