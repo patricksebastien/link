@@ -44,8 +44,8 @@ static const char *TAG = "Touch pad";
 #define TOUCH_THRESH_PERCENT  (80)
 #define TOUCHPAD_FILTER_TOUCH_PERIOD (10)
 
-static bool s_pad_activated[TOUCH_PAD_MAX];
-static uint32_t s_pad_init_val[TOUCH_PAD_MAX];
+static bool s_pad_activated[2];
+static uint32_t s_pad_init_val[2];
 
 static void tp_example_set_thresholds(void)
 {
@@ -64,33 +64,22 @@ static void tp_example_read_task(void *pvParameter) {
  while (1) {
      
     touch_pad_intr_enable();
-
-                if (s_pad_activated[7] == true) {
-                    ESP_LOGI(TAG, "T%d activated!", 7);  // Wait a while for the pad being released
-                    vTaskDelay(200 / portTICK_PERIOD_MS);  // Clear information on pad activation
-                    s_pad_activated[7] = false; // Reset the counter triggering a message // that application is running
-                    show_message = 1;
-                }
-   
-                if (s_pad_activated[8] == true) {
-                    ESP_LOGI(TAG, "T%d activated!", 8);  // Wait a while for the pad being released
-                    vTaskDelay(200 / portTICK_PERIOD_MS);  // Clear information on pad activation
-                    s_pad_activated[8] = false; // Reset the counter triggering a message // that application is running
-                    show_message = 1;
-                }
-     
-        vTaskDelay(10 / portTICK_PERIOD_MS);
-
-     
-        if (show_message++ % 500 == 0) {
-            ESP_LOGI(TAG, "Waiting for any pad being touched...");    // If no pad is touched, every couple of seconds, show a message that application is running
+    for (int i = 7; i < 9; i++) {
+        if (s_pad_activated[i] == true) {
+        ESP_LOGI(TAG, "T%d activated!", i);  // Wait a while for the pad being released
+        vTaskDelay(200 / portTICK_PERIOD_MS);  // Clear information on pad activation
+        s_pad_activated[i] = false; // Reset the counter triggering a message // that application is running
+        show_message = 1;
         }
+    }
+        
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+     
     }
 }
 
-//  Handle an interrupt triggered when a pad is touched. Recognize what pad has been touched and save it in a table.
 
-static void tp_example_rtc_intr(void *arg) {
+static void tp_example_rtc_intr(void *arg) { //  Handle an interrupt triggered when a pad is touched. Recognize what pad has been touched and save it in a table.
     uint32_t pad_intr = touch_pad_get_status();
     //clear interrupt
     touch_pad_clear_status();
@@ -100,7 +89,6 @@ static void tp_example_rtc_intr(void *arg) {
         }
     }
 }
-
 
 
 static void tp_example_touch_pad_init(void) { // Before reading touch pad, we need to initialize the RTC IO.
