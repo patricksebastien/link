@@ -47,6 +47,10 @@ static const char *TAG = "Touch pad";
 static bool s_pad_activated[2];
 static uint32_t s_pad_init_val[2];
 
+// Global
+static void periodic_timer_callback(void* arg);
+esp_timer_handle_t periodic_timer;
+
 static void tp_example_set_thresholds(void)
 {
     uint16_t touch_value;
@@ -271,7 +275,10 @@ void printTask(void* userParam)
 
 // callbacks
 void tempoChanged(double tempo) {
-  std::cout << std::defaultfloat << "| new tempo: " << tempo << std::endl;
+    double midiClockMicroSecond = ((60000 / tempo) / 24) * 1000;
+    esp_timer_handle_t periodic_timer_handle = (esp_timer_handle_t) periodic_timer;
+    ESP_ERROR_CHECK(esp_timer_stop(periodic_timer_handle));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(periodic_timer_handle, midiClockMicroSecond));
 }
 
 void startStopChanged(bool isPlaying) {
@@ -288,8 +295,8 @@ void tickTask(void* userParam)
   link.enableStartStopSync(true); // if not no callback for start/stop
 
   // callbacks
-  //link.setTempoCallback(tempoChanged);
-  //link.setStartStopCallback(startStopChanged);
+  link.setTempoCallback(tempoChanged);
+  link.setStartStopCallback(startStopChanged);
 
   // debug
   if (PRINT_LINK_STATE)
@@ -339,17 +346,16 @@ extern "C" void app_main()
 
   // SOFTWARE TIMER - LINK = PHASE & LED
   SemaphoreHandle_t tickSemphr = xSemaphoreCreateBinary();
-  timerGroup0Init(100, tickSemphr);
-  xTaskCreate(tickTask, "tick", 8192, tickSemphr, configMAX_PRIORITIES - 1, nullptr);
+  timerGroup0Init(1000, tickSemphr);
+  xTaskCreate(tickTask, "tick", 8192, tickSemphr, 1, nullptr);
 
   // HARDWARE TIMER - MIDI CLOCK
   const esp_timer_create_args_t periodic_timer_args = {
           .callback = &periodic_timer_callback,
           .name = "periodic"
   };
-  esp_timer_handle_t periodic_timer;
   ESP_ERROR_CHECK(esp_timer_create(&periodic_timer_args, &periodic_timer));
-  ESP_ERROR_CHECK(esp_timer_start_periodic(periodic_timer, 20833.333333333));
+  ESP_ERROR_CHECK(esp_timer_start_periodic(periodic_timer, 20833.333333333)); // 120bpm by default
     
   #if defined USE_TOUCH_PADS
     ESP_LOGI(TAG, "Initializing touch pad");     // Initialize touch pad peripheral, it will start a timer to run a filter
