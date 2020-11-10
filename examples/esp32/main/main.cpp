@@ -50,6 +50,10 @@ static uint32_t s_pad_init_val[2];
 // Global
 static void periodic_timer_callback(void* arg);
 esp_timer_handle_t periodic_timer;
+bool startStopCB = false;
+bool startStopState = false;
+double curr_beat_time;
+double prev_beat_time;
 
 static void tp_example_set_thresholds(void)
 {
@@ -313,6 +317,30 @@ void tickTask(void* userParam)
     const auto state = link.captureAudioSessionState();
     const auto phase = state.phaseAtTime(link.clock().micros(), 1.);
     gpio_set_level(LED, fmodf(phase, 1.) < 0.1);
+
+    // start / stop midi
+    curr_beat_time = state.beatAtTime(link.clock().micros(), 4);
+    const double curr_phase = fmod(curr_beat_time, 4);
+    if (curr_beat_time > prev_beat_time) {
+      const double prev_phase = fmod(prev_beat_time, 4);
+      const double prev_step = floor(prev_phase * 1);
+      const double curr_step = floor(curr_phase * 1);
+      if (prev_phase - curr_phase > 4 / 2 || prev_step != curr_step) {
+        if(curr_step == 0 && startStopState != startStopCB) {
+              if(startStopCB) {
+                char zedata[] = { MIDI_START };
+                uart_write_bytes(UART_NUM_1, zedata, 1);
+                uart_write_bytes(UART_NUM_1, 0, 1);
+              } else {
+                char zedata[] = { MIDI_STOP };
+                uart_write_bytes(UART_NUM_1, zedata, 1);
+                uart_write_bytes(UART_NUM_1, 0, 1);
+              }
+              startStopState = startStopCB;
+        }
+      }
+    }
+    prev_beat_time = curr_beat_time;
 
     portYIELD();
   }
