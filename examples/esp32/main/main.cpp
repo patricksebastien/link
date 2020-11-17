@@ -29,8 +29,10 @@
 // Global
 static void periodic_timer_callback(void* arg);
 esp_timer_handle_t periodic_timer;
-
-bool isPlaying = true;
+bool startStopCB = false;
+bool startStopState = false;
+double curr_beat_time;
+double prev_beat_time;
 
 
 /*
